@@ -1,137 +1,91 @@
-import { pathToFileURL } from 'node:url';
-import {
-	type TransformOptions,
-	type TransformFailure,
-} from 'esbuild';
-import { sha1 } from '../../utils/sha1.js';
-import {
-	version as transformDynamicImportVersion,
-	transformDynamicImport,
-} from '../../utils/transform/transform-dynamic-import.js';
-import cache from '../../utils/transform/cache.js';
+import { pathToFileURL } from "node:url";
+import { sha1 } from "../../utils/sha1.js";
+import cache from "../../utils/transform/cache.js";
 import {
 	applyTransformersSync,
 	applyTransformers,
 	type Transformed,
-} from '../../utils/transform/apply-transformers.js';
-import {
-	cacheConfig,
-	patchOptions,
-} from './get-esbuild-options.js';
+} from "../../utils/transform/apply-transformers.js";
+import { getTranspiledOverTCP } from "./tcp-transpile.js";
 
-const formatEsbuildError = (
-	error: TransformFailure,
-) => {
-	error.name = 'TransformError';
-	// @ts-expect-error deleting non-option property
-	delete error.errors;
-	// @ts-expect-error deleting non-option property
-	delete error.warnings;
-	throw error;
+const formatTcpTranspileError = (error: Error) => {
+	const transformedError = new Error("TCP Transpile Error");
+	transformedError.message = error.message;
+	throw transformedError;
 };
 
-// used by cjs-loader
-export const createEsbuildTransformSync = (esbuild: typeof import('esbuild')) => (
-	code: string,
-	filePath: string,
-	extendOptions?: TransformOptions,
-): Transformed => {
-	const [filePathWithoutQuery, query] = filePath.split('?');
-	const define: { [key: string]: string } = {};
+// Configuration for TCP transpile server
+const tcpHost = "127.0.0.1"; // Replace with your TCP server host
+const tcpPort = 3000; // Replace with your TCP server port
 
-	if (!(filePathWithoutQuery.endsWith('.cjs') || filePathWithoutQuery.endsWith('.cts'))) {
-		define['import.meta.url'] = JSON.stringify(pathToFileURL(filePathWithoutQuery) + (query ? `?${query}` : ''));
-	}
+// Used by CJS loader
+export const createEsbuildTransformSync =
+	() =>
+	(code: string, filePath: string): Transformed => {
+		const [filePathWithoutQuery, query] = filePath.split("?");
+		const define: { [key: string]: string } = {};
 
-	const esbuildOptions = {
-		...cacheConfig,
-		format: 'cjs',
-		sourcefile: filePathWithoutQuery,
-		define,
-		banner: '(()=>{',
-		footer: '})()',
+		if (
+			!(
+				filePathWithoutQuery.endsWith(".cjs") ||
+				filePathWithoutQuery.endsWith(".cts")
+			)
+		) {
+			define["import.meta.url"] = JSON.stringify(
+				pathToFileURL(filePathWithoutQuery) + (query ? `?${query}` : ""),
+			);
+		}
 
-		// CJS Annotations for Node. Used by ESM loader for CJS interop
-		platform: 'node',
+		const hash = sha1(
+			[code, filePathWithoutQuery, JSON.stringify(define)].join("-"),
+		);
+		let transformed = cache.get(hash);
 
-		...extendOptions,
-	} as const;
-
-	const hash = sha1([
-		code,
-		JSON.stringify(esbuildOptions),
-		esbuild.version,
-		transformDynamicImportVersion,
-	].join('-'));
-	let transformed = cache.get(hash);
-
-	if (!transformed) {
-		transformed = applyTransformersSync(
-			filePath,
-			code,
-			[
+		if (!transformed) {
+			transformed = applyTransformersSync(filePath, code, [
 				(_filePath, _code) => {
-					const patchResult = patchOptions(esbuildOptions);
-					let result;
+					let transpiledCode;
 					try {
-						result = esbuild.transformSync(_code, esbuildOptions);
+						transpiledCode = getTranspiledOverTCP(tcpHost, tcpPort, _filePath);
 					} catch (error) {
-						throw formatEsbuildError(error as TransformFailure);
+						throw formatTcpTranspileError(error);
 					}
-					return patchResult(result);
+					return { code: transpiledCode, map: null };
 				},
-				(_filePath, _code) => transformDynamicImport(_filePath, _code, true),
-			],
-		);
+			]);
 
-		cache.set(hash, transformed);
-	}
+			cache.set(hash, transformed);
+		}
 
-	return transformed;
-};
+		return transformed;
+	};
 
-// Used by esm-loader
-export const createEsbuildTransform = (esbuild: typeof import('esbuild')) => async (
-	code: string,
-	filePath: string,
-	extendOptions?: TransformOptions,
-): Promise<Transformed> => {
-	const esbuildOptions = {
-		...cacheConfig,
-		format: 'esm',
-		sourcefile: filePath,
-		...extendOptions,
-	} as const;
+// Used by ESM loader
+export const createEsbuildTransform =
+	() =>
+	async (code: string, filePath: string): Promise<Transformed> => {
+		const hash = sha1([code, filePath].join("-"));
+		let transformed = cache.get(hash);
 
-	const hash = sha1([
-		code,
-		JSON.stringify(esbuildOptions),
-		esbuild.version,
-		transformDynamicImportVersion,
-	].join('-'));
-	let transformed = cache.get(hash);
-
-	if (!transformed) {
-		transformed = await applyTransformers(
-			filePath,
-			code,
-			[
+		if (!transformed) {
+			transformed = await applyTransformers(filePath, code, [
 				async (_filePath, _code) => {
-					const patchResult = patchOptions(esbuildOptions);
-					let result;
+					let transpiledCode;
 					try {
-						result = await esbuild.transform(_code, esbuildOptions);
+						transpiledCode = await getTranspiledOverTCP(
+							tcpHost,
+							tcpPort,
+							_filePath,
+						);
 					} catch (error) {
-						throw formatEsbuildError(error as TransformFailure);
+						throw formatTcpTranspileError(error);
 					}
-					return patchResult(result);
+					return { code: transpiledCode, map: null };
 				},
-				(_filePath, _code) => transformDynamicImport(_filePath, _code, true),
-			],
-		);
+			]);
 
-		cache.set(hash, transformed);
-	}
+			cache.set(hash, transformed);
+		}
 
-	return transformed;
-};
+		return transformed;
+	};

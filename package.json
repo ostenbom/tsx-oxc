@@ -18,41 +18,11 @@
 		"name": "Hiroki Osame",
 		"email": "hiroki.osame@gmail.com"
 	},
-	"files": [
-		"dist"
-	],
+	"files": ["dist"],
 	"type": "module",
-	"bin": "./dist/cli.mjs",
 	"exports": {
 		"./package.json": "./package.json",
-		".": "./dist/loader.mjs",
-		"./patch-repl": "./dist/patch-repl.cjs",
-		"./cjs": "./dist/cjs/index.cjs",
-		"./cjs/api": {
-			"import": {
-				"types": "./dist/cjs/api/index.d.mts",
-				"default": "./dist/cjs/api/index.mjs"
-			},
-			"require": {
-				"types": "./dist/cjs/api/index.d.cts",
-				"default": "./dist/cjs/api/index.cjs"
-			}
-		},
-		"./esm": "./dist/esm/index.mjs",
-		"./esm/api": {
-			"import": {
-				"types": "./dist/esm/api/index.d.mts",
-				"default": "./dist/esm/api/index.mjs"
-			},
-			"require": {
-				"types": "./dist/esm/api/index.d.cts",
-				"default": "./dist/esm/api/index.cjs"
-			}
-		},
-		"./cli": "./dist/cli.mjs",
-		"./suppress-warnings": "./dist/suppress-warnings.cjs",
-		"./preflight": "./dist/preflight.cjs",
-		"./repl": "./dist/repl.mjs"
+		".": "./dist/esm/index.mjs"
 	},
 	"packageManager": "pnpm@9.11.0",
 	"homepage": "https://tsx.is",
@@ -69,14 +39,13 @@
 	"engines": {
 		"node": ">=18.0.0"
 	},
-	"dependencies": {
-		"esbuild": "~0.23.0",
-		"get-tsconfig": "^4.7.5"
-	},
+	"dependencies": {},
 	"optionalDependencies": {
 		"fsevents": "~2.3.3"
 	},
 	"devDependencies": {
+		"esbuild": "~0.23.0",
+		"get-tsconfig": "^4.7.5",
 		"@ampproject/remapping": "^2.3.0",
 		"@types/cross-spawn": "^6.0.6",
 		"@types/node": "^20.14.9",
