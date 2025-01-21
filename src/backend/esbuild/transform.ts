@@ -15,8 +15,6 @@ const formatTcpTranspileError = (error: Error) => {
 };
 
 // Configuration for TCP transpile server
-const tcpHost = "127.0.0.1"; // Replace with your TCP server host
-const tcpPort = 3000; // Replace with your TCP server port
 
 // Used by CJS loader
 export const createEsbuildTransformSync =
@@ -44,13 +42,13 @@ export const createEsbuildTransformSync =
 		if (!transformed) {
 			transformed = applyTransformersSync(filePath, code, [
 				(_filePath, _code) => {
-					let transpiledCode;
+					let result;
 					try {
-						transpiledCode = getTranspiledOverTCP(tcpHost, tcpPort, _filePath);
+						result = getTranspiledOverTCP(_filePath);
 					} catch (error) {
 						throw formatTcpTranspileError(error);
 					}
-					return { code: transpiledCode, map: null };
+					return result;
 				},
 			]);
 
@@ -64,28 +62,24 @@ export const createEsbuildTransformSync =
 export const createEsbuildTransform =
 	() =>
 	async (code: string, filePath: string): Promise<Transformed> => {
+		let result;
+		try {
+			result = await getTranspiledOverTCP(filePath);
+		} catch (error) {
+			throw formatTcpTranspileError(error);
+		}
+		return result;
 		const hash = sha1([code, filePath].join("-"));
 		let transformed = cache.get(hash);
 
 		if (!transformed) {
 			transformed = await applyTransformers(filePath, code, [
-				async (_filePath, _code) => {
-					let transpiledCode;
-					try {
-						transpiledCode = await getTranspiledOverTCP(
-							tcpHost,
-							tcpPort,
-							_filePath,
-						);
-					} catch (error) {
-						throw formatTcpTranspileError(error);
-					}
-					return { code: transpiledCode, map: null };
-				},
+				async (_filePath, _code) => {},
 			]);
 
 			cache.set(hash, transformed);
 		}
+		console.log("transformed return", transformed);
 
 		return transformed;
 	};

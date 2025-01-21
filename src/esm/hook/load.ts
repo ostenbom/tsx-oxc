@@ -1,31 +1,33 @@
-import { fileURLToPath } from 'node:url';
-import path from 'node:path';
-import type { LoadHook, LoadHookContext } from 'node:module';
-import { readFile } from 'node:fs/promises';
-import type { TransformOptions } from 'esbuild';
-import backend from '../../backend/index.js';
-import { transformDynamicImport } from '../../utils/transform/transform-dynamic-import.js';
-import { inlineSourceMap } from '../../source-map.js';
-import { isFeatureSupported, importAttributes, esmLoadReadFile } from '../../utils/node-features.js';
-import { parent } from '../../utils/ipc/client.js';
-import type { Message } from '../types.js';
-import { fileMatcher } from '../../utils/tsconfig.js';
-import { isJsonPattern, tsExtensionsPattern, fileUrlPrefix } from '../../utils/path-utils.js';
-import { isESM } from '../../utils/es-module-lexer.js';
-import { getNamespace } from './utils.js';
-import { data } from './initialize.js';
+import { fileURLToPath } from "node:url";
+import path from "node:path";
+import type { LoadHook, LoadHookContext } from "node:module";
+import { readFile } from "node:fs/promises";
+import type { TransformOptions } from "esbuild";
+import backend from "../../backend/index.js";
+import { transformDynamicImport } from "../../utils/transform/transform-dynamic-import.js";
+import { inlineSourceMap } from "../../source-map.js";
+import {
+	isFeatureSupported,
+	importAttributes,
+	esmLoadReadFile,
+} from "../../utils/node-features.js";
+import { parent } from "../../utils/ipc/client.js";
+import type { Message } from "../types.js";
+import { fileMatcher } from "../../utils/tsconfig.js";
+import {
+	isJsonPattern,
+	tsExtensionsPattern,
+	fileUrlPrefix,
+} from "../../utils/path-utils.js";
+import { isESM } from "../../utils/es-module-lexer.js";
+import { getNamespace } from "./utils.js";
+import { data } from "./initialize.js";
 
-const contextAttributesProperty = (
-	isFeatureSupported(importAttributes)
-		? 'importAttributes'
-		: 'importAssertions'
-);
+const contextAttributesProperty = isFeatureSupported(importAttributes)
+	? "importAttributes"
+	: "importAssertions";
 
-export const load: LoadHook = async (
-	url,
-	context,
-	nextLoad,
-) => {
+export const load: LoadHook = async (url, context, nextLoad) => {
 	if (!data.active) {
 		return nextLoad(url, context);
 	}
@@ -37,9 +39,9 @@ export const load: LoadHook = async (
 
 	if (data.port) {
 		const parsedUrl = new URL(url);
-		parsedUrl.searchParams.delete('tsx-namespace');
+		parsedUrl.searchParams.delete("tsx-namespace");
 		data.port.postMessage({
-			type: 'load',
+			type: "load",
 			url: parsedUrl.toString(),
 		} satisfies Message);
 	}
@@ -50,7 +52,7 @@ export const load: LoadHook = async (
 	*/
 	if (parent.send) {
 		parent.send({
-			type: 'dependency',
+			type: "dependency",
 			path: url,
 		});
 	}
@@ -59,22 +61,56 @@ export const load: LoadHook = async (
 		// @types/node only declares `importAttributes` type
 		// eslint-disable-next-line @typescript-eslint/no-explicit-any
 		context[contextAttributesProperty as keyof LoadHookContext] ||= {} as any;
-		(context[contextAttributesProperty as keyof LoadHookContext] as ImportAttributes).type = 'json';
+		(
+			context[
+				contextAttributesProperty as keyof LoadHookContext
+			] as ImportAttributes
+		).type = "json";
 	}
 
 	const loaded = await nextLoad(url, context);
 	const filePath = url.startsWith(fileUrlPrefix) ? fileURLToPath(url) : url;
 
+	if (tsExtensionsPattern.test(url)) {
+		const code = await readFile(new URL(url), "utf8");
+		const transformed = await backend.transform(code, filePath, {
+			tsconfigRaw: path.isAbsolute(filePath)
+				? (fileMatcher?.(filePath) as TransformOptions["tsconfigRaw"])
+				: undefined,
+		});
+
+		// Inject `__dirname` and `require` shim, for playwright config/setup compatibility
+		const dirname = path.dirname(filePath);
+		const requireShim = `
+			const __dirname = ${JSON.stringify(dirname)};
+			// Custom require shim
+			const require = (modulePath) => {
+			  return import(path.resolve(${JSON.stringify(dirname)}, modulePath));
+			};
+			require.resolve = (modulePath) => {
+			  return path.resolve(${JSON.stringify(dirname)}, modulePath);
+			};
+		`;
+		const pathImport = transformed.code.includes("import path")
+			? ""
+			: 'import path from "path";';
+
+		return {
+			format: "module",
+			source: pathImport + requireShim + transformed.code,
+		};
+	}
+
 	if (
-		loaded.format === 'commonjs'
-		&& isFeatureSupported(esmLoadReadFile)
-		&& loaded.responseURL?.startsWith('file:') // Could be data:
-		&& !filePath.endsWith('.cjs') // CJS syntax doesn't need to be transformed for interop
+		loaded.format === "commonjs" &&
+		isFeatureSupported(esmLoadReadFile) &&
+		loaded.responseURL?.startsWith("file:") && // Could be data:
+		!filePath.endsWith(".cjs") // CJS syntax doesn't need to be transformed for interop
 	) {
-		const code = await readFile(new URL(url), 'utf8');
+		const code = await readFile(new URL(url), "utf8");
 
 		// if the file extension is .js, only transform if using esm syntax
-		if (!filePath.endsWith('.js') || isESM(code)) {
+		if (!filePath.endsWith(".js") || isESM(code)) {
 			/**
 			 * es or cjs module lexer unfortunately cannot be used because it doesn't support
 			 * typescript syntax
@@ -90,15 +126,13 @@ export const load: LoadHook = async (
 			 * which are already in CJS syntax.
 			 * In CTS, module.exports can be written in any pattern.
 			 */
-			const transformed = backend.transformSync(
-				code,
-				filePath,
-				{
-					tsconfigRaw: fileMatcher?.(filePath) as TransformOptions['tsconfigRaw'],
-				},
-			);
+			const transformed = await backend.transform(code, filePath, {
+				tsconfigRaw: fileMatcher?.(filePath) as TransformOptions["tsconfigRaw"],
+			});
 
-			const filePathWithNamespace = urlNamespace ? `${filePath}?namespace=${encodeURIComponent(urlNamespace)}` : filePath;
+			const filePathWithNamespace = urlNamespace
+				? `${filePath}?namespace=${encodeURIComponent(urlNamespace)}`
+				: filePath;
 
 			loaded.responseURL = `data:text/javascript,${encodeURIComponent(transformed.code)}?filePath=${encodeURIComponent(filePathWithNamespace)}`;
 			return loaded;
@@ -114,28 +148,22 @@ export const load: LoadHook = async (
 
 	if (
 		// Support named imports in JSON modules
-		loaded.format === 'json'
-		|| tsExtensionsPattern.test(url)
+		loaded.format === "json" ||
+		tsExtensionsPattern.test(url)
 	) {
-		const transformed = await backend.transform(
-			code,
-			filePath,
-			{
-				tsconfigRaw: (
-					path.isAbsolute(filePath)
-						? fileMatcher?.(filePath) as TransformOptions['tsconfigRaw']
-						: undefined
-				),
-			},
-		);
+		const transformed = await backend.transform(code, filePath, {
+			tsconfigRaw: path.isAbsolute(filePath)
+				? (fileMatcher?.(filePath) as TransformOptions["tsconfigRaw"])
+				: undefined,
+		});
 
 		return {
-			format: 'module',
+			format: "module",
 			source: inlineSourceMap(transformed),
 		};
 	}
 
-	if (loaded.format === 'module') {
+	if (loaded.format === "module") {
 		const dynamicImportTransformed = transformDynamicImport(filePath, code);
 		if (dynamicImportTransformed) {
 			loaded.source = inlineSourceMap(dynamicImportTransformed);

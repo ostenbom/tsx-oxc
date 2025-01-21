@@ -1,4 +1,8 @@
 import net from "net";
+import type { Transformed } from "../../utils/transform/apply-transformers";
+
+const host = "127.0.0.1"; // Replace with your TCP server host
+const port = process.env.TS_EVAL_PORT; // Replace with your TCP server port
 
 /**
  * Fetch transpiled content from a Rust-based TCP socket server.
@@ -9,13 +13,10 @@ import net from "net";
  * @returns {Promise<string>} - The transpiled file content.
  */
 export const getTranspiledOverTCP = async (
-	host: string,
-	port: number,
 	filePath: string,
-): Promise<string> => {
+): Promise<Transformed> => {
 	return new Promise((resolve, reject) => {
 		const client = net.createConnection({ host, port }, () => {
-			console.log(`Connected to transpile server at ${host}:${port}`);
 			const request = JSON.stringify({ file_path: filePath }) + "\n";
 			client.write(request);
 		});
@@ -35,11 +36,16 @@ export const getTranspiledOverTCP = async (
 						const response = JSON.parse(responseLine);
 						if (response.transpiled_code) {
 							client.end();
-							resolve(
-								Buffer.from(response.transpiled_code, "base64").toString(
+							let map = null;
+							if (response.source_map) {
+								map = JSON.parse(response.source_map);
+							}
+							resolve({
+								code: Buffer.from(response.transpiled_code, "base64").toString(
 									"utf-8",
 								),
-							);
+								map,
+							});
 						} else {
 							reject(
 								new Error("Invalid response format: Missing transpiled_code"),
@@ -57,7 +63,7 @@ export const getTranspiledOverTCP = async (
 		});
 
 		client.on("end", () => {
-			console.log("Disconnected from transpile server");
+			// console.log("Disconnected from transpile server");
 		});
 	});
 };
